@@ -1,0 +1,74 @@
+{
+  "kind": "collectionType",
+  "collectionName": "properties",
+  "info": {
+    "singularName": "property",
+    "pluralName": "properties",
+    "displayName": "Immobilien",
+    "description": "Einfache Immobilienerfassung für Häuser, Neubauprojekte und Wohnungen."
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "titel": {
+      "type": "string",
+      "required": true
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "titel"
+    },
+    "objektgruppe": {
+      "type": "enumeration",
+      "enum": ["haeuser", "neubau", "wohnungen"],
+      "required": true
+    },
+    "ort": {
+      "type": "string",
+      "required": true
+    },
+    "region": {
+      "type": "string",
+      "default": "Costa del Sol"
+    },
+    "preisText": {
+      "type": "string",
+      "required": true
+    },
+    "kurzbeschreibung": {
+      "type": "text",
+      "required": true
+    },
+    "beschreibung": {
+      "type": "richtext",
+      "required": true
+    },
+    "eckdaten": {
+      "type": "text"
+    },
+    "highlights": {
+      "type": "text"
+    },
+    "vermarktungsstatus": {
+      "type": "enumeration",
+      "enum": ["verfuegbar", "reserviert", "verkauft"],
+      "default": "verfuegbar"
+    },
+    "featured": {
+      "type": "boolean",
+      "default": false
+    },
+    "vorschauBild": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": ["images"]
+    },
+    "bildergalerie": {
+      "type": "media",
+      "multiple": true,
+      "allowedTypes": ["images"]
+    }
+  }
+}

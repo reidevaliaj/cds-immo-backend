@@ -1,0 +1,52 @@
+{
+  "kind": "singleType",
+  "collectionName": "homepages",
+  "info": {
+    "singularName": "homepage",
+    "pluralName": "homepages",
+    "displayName": "Homepage",
+    "description": "Preview content and hero text for the homepage."
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "eyebrow": {
+      "type": "string",
+      "required": true
+    },
+    "heroTitle": {
+      "type": "string",
+      "required": true
+    },
+    "heroDescription": {
+      "type": "text",
+      "required": true
+    },
+    "heroPrimaryLabel": {
+      "type": "string"
+    },
+    "heroPrimaryHref": {
+      "type": "string"
+    },
+    "heroSecondaryLabel": {
+      "type": "string"
+    },
+    "heroSecondaryHref": {
+      "type": "string"
+    },
+    "scrollSectionTitle": {
+      "type": "string"
+    },
+    "scrollSectionDescription": {
+      "type": "text"
+    },
+    "whyChooseTitle": {
+      "type": "string"
+    },
+    "whyChooseDescription": {
+      "type": "text"
+    }
+  }
+}
