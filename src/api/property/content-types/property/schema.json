@@ -37,6 +37,18 @@
       "type": "string",
       "required": true
     },
+    "schlafzimmer": {
+      "type": "string"
+    },
+    "badezimmer": {
+      "type": "string"
+    },
+    "garage": {
+      "type": "string"
+    },
+    "pool": {
+      "type": "string"
+    },
     "kurzbeschreibung": {
       "type": "text",
       "required": true

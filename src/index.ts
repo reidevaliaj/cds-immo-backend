@@ -15,6 +15,10 @@ const CLIENT_PROPERTY_FIELDS = [
   "ort",
   "region",
   "preisText",
+  "schlafzimmer",
+  "badezimmer",
+  "garage",
+  "pool",
   "kurzbeschreibung",
   "beschreibung",
   "eckdaten",
@@ -48,7 +52,7 @@ async function ensureAdminPermission(
   properties: Record<string, unknown>,
 ) {
   const knex = strapi.db.connection;
-  const timestamp = Date.now();
+  const timestamp = new Date();
   const serialized = JSON.stringify(properties);
 
   const existingPermissions = await knex("admin_permissions")
@@ -82,7 +86,7 @@ async function ensureAdminPermission(
 
 async function ensureClientRole(strapi: Core.Strapi) {
   const knex = strapi.db.connection;
-  const timestamp = Date.now();
+  const timestamp = new Date();
 
   let role = await knex("admin_roles")
     .where({ code: CLIENT_ROLE_CODE })
@@ -250,9 +254,100 @@ type PropertyDocument = {
   documentId?: string;
   slug?: string;
   titel?: string;
+  eckdaten?: string;
+  schlafzimmer?: string | null;
+  badezimmer?: string | null;
+  garage?: string | null;
+  pool?: string | null;
   vorschauBild?: { id?: number } | null;
   bildergalerie?: Array<{ id?: number }> | null;
 };
+
+function normalizePropertySlug(slug?: string) {
+  return slug?.replace(/-\d+$/, "") ?? "";
+}
+
+function normalizePropertyTitle(title?: string) {
+  return (
+    title
+      ?.normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim() ?? ""
+  );
+}
+
+function normalizeAmenityToken(value?: string) {
+  return (
+    value
+      ?.normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/ß/g, "ss")
+      .toLowerCase()
+      .trim() ?? ""
+  );
+}
+
+function parseAmenityValues(eckdaten?: string) {
+  const lines = eckdaten
+    ?.split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines?.length) {
+    return {} as Record<"schlafzimmer" | "badezimmer" | "garage" | "pool", string>;
+  }
+
+  const values: Partial<
+    Record<"schlafzimmer" | "badezimmer" | "garage" | "pool", string>
+  > = {};
+
+  for (const line of lines) {
+    const parts = line.split(":");
+    const label = normalizeAmenityToken(parts.shift());
+    const rawValue = parts.join(":").trim();
+    const value = rawValue || "inklusive";
+    const wholeLine = normalizeAmenityToken(line);
+
+    if (!values.schlafzimmer && label.includes("schlafzimmer")) {
+      values.schlafzimmer = value;
+    }
+
+    if (
+      !values.badezimmer &&
+      (label.includes("badezimmer") ||
+        label.includes("bader") ||
+        label === "bad")
+    ) {
+      values.badezimmer = value;
+    }
+
+    if (
+      !values.garage &&
+      (label.includes("garage") ||
+        label.includes("garagenplatze") ||
+        label.includes("parkplatz") ||
+        label.includes("stellplatz"))
+    ) {
+      values.garage = value;
+    }
+
+    if (!values.pool && label.includes("pool")) {
+      values.pool = value;
+    }
+
+    if (!values.garage && wholeLine.includes("garage")) {
+      values.garage = "inklusive";
+    }
+
+    if (!values.pool && wholeLine.includes("pool")) {
+      values.pool = "inklusive";
+    }
+  }
+
+  return values;
+}
 
 async function ensurePropertyMedia(strapi: Core.Strapi) {
   const uploadService = strapi.plugin("upload").service("upload");
@@ -266,84 +361,173 @@ async function ensurePropertyMedia(strapi: Core.Strapi) {
     },
   })) as PropertyDocument[];
 
-  const propertiesBySlug = new Map(
-    documents
-      .filter((entry) => entry.slug)
-      .map((entry) => [entry.slug as string, entry]),
-  );
+  const propertiesBySlug = new Map<string, PropertyDocument>();
+  const propertiesByTitle = new Map<string, PropertyDocument>();
+
+  for (const document of documents) {
+    const canonicalSlug = normalizePropertySlug(document.slug);
+
+    if (canonicalSlug && !propertiesBySlug.has(canonicalSlug)) {
+      propertiesBySlug.set(canonicalSlug, document);
+    }
+
+    const canonicalTitle = normalizePropertyTitle(document.titel);
+
+    if (canonicalTitle && !propertiesByTitle.has(canonicalTitle)) {
+      propertiesByTitle.set(canonicalTitle, document);
+    }
+  }
 
   let uploadedCount = 0;
   let assignedCount = 0;
+  let skippedCount = 0;
+  let failedCount = 0;
 
   for (const property of propertySeed) {
-    const document = propertiesBySlug.get(property.slug);
+    const canonicalSlug = normalizePropertySlug(property.slug);
+    const document =
+      propertiesBySlug.get(canonicalSlug) ??
+      propertiesByTitle.get(normalizePropertyTitle(property.titel));
 
     if (!document?.documentId) {
+      skippedCount += 1;
       continue;
     }
 
-    const hasPreviewImage = Boolean(document.vorschauBild?.id);
-    const galleryIds = (document.bildergalerie ?? [])
-      .map((image) => image.id)
-      .filter((value): value is number => Number.isInteger(value));
-    const needsGallery = galleryIds.length === 0;
+    try {
+      const hasPreviewImage = Boolean(document.vorschauBild?.id);
+      const galleryIds = (document.bildergalerie ?? [])
+        .map((image) => image.id)
+        .filter((value): value is number => Number.isInteger(value));
+      const needsGallery = galleryIds.length === 0;
 
-    if (hasPreviewImage && !needsGallery) {
-      continue;
-    }
-
-    const mediaKey = `property-cover-${property.slug}`;
-    let media = await strapi.db.query("plugin::upload.file").findOne({
-      where: { alternativeText: mediaKey },
-    });
-
-    if (!media) {
-      const tmpDirectory = await mkdtemp(
-        path.join(os.tmpdir(), "cds-immo-media-"),
-      );
-
-      try {
-        const { file } = await fileService.fetchUrlToInputFile(
-          property.coverImageUrl,
-          tmpDirectory,
-          15 * 1024 * 1024,
-        );
-        const uploaded = await uploadService.upload({
-          data: {
-            fileInfo: {
-              name: `${property.slug}.jpg`,
-              alternativeText: mediaKey,
-              caption: property.titel,
-            },
-          },
-          files: file,
-        });
-
-        media = Array.isArray(uploaded) ? uploaded[0] : uploaded;
-        uploadedCount += media?.id ? 1 : 0;
-      } finally {
-        await rm(tmpDirectory, { recursive: true, force: true });
+      if (hasPreviewImage && !needsGallery) {
+        continue;
       }
+
+      const mediaKey = `property-cover-${canonicalSlug || property.slug}`;
+      let media = await strapi.db.query("plugin::upload.file").findOne({
+        where: { alternativeText: mediaKey },
+      });
+
+      if (!media) {
+        const tmpDirectory = await mkdtemp(
+          path.join(os.tmpdir(), "cds-immo-media-"),
+        );
+
+        try {
+          const { file } = await fileService.fetchUrlToInputFile(
+            property.coverImageUrl,
+            tmpDirectory,
+            15 * 1024 * 1024,
+          );
+          const uploaded = await uploadService.upload({
+            data: {
+              fileInfo: {
+                name: `${canonicalSlug || property.slug}.jpg`,
+                alternativeText: mediaKey,
+                caption: property.titel,
+              },
+            },
+            files: file,
+          });
+
+          media = Array.isArray(uploaded) ? uploaded[0] : uploaded;
+          uploadedCount += media?.id ? 1 : 0;
+        } finally {
+          await rm(tmpDirectory, { recursive: true, force: true });
+        }
+      }
+
+      if (!media?.id) {
+        skippedCount += 1;
+        continue;
+      }
+
+      await strapi.documents(PROPERTY_MODEL_UID).update({
+        documentId: document.documentId,
+        status: "published",
+        data: {
+          vorschauBild: hasPreviewImage ? document.vorschauBild?.id : media.id,
+          bildergalerie: needsGallery ? [media.id] : galleryIds,
+        },
+      });
+
+      assignedCount += 1;
+    } catch (error) {
+      failedCount += 1;
+      strapi.log.warn(
+        `[property-media] Failed to sync "${property.titel}" (${property.slug}): ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+      );
+    }
+  }
+
+  strapi.log.info(
+    `[property-media] ${uploadedCount} images uploaded, ${assignedCount} properties synced with media, ${skippedCount} skipped, ${failedCount} failed.`,
+  );
+}
+
+async function ensurePropertyAmenityFields(strapi: Core.Strapi) {
+  const documents = (await strapi.documents(PROPERTY_MODEL_UID).findMany({
+    status: "published",
+    fields: [
+      "documentId",
+      "eckdaten",
+      "schlafzimmer",
+      "badezimmer",
+      "garage",
+      "pool",
+    ] as any,
+  })) as PropertyDocument[];
+
+  let updatedCount = 0;
+  let skippedCount = 0;
+
+  for (const document of documents) {
+    if (!document.documentId) {
+      skippedCount += 1;
+      continue;
     }
 
-    if (!media?.id) {
+    const parsed = parseAmenityValues(document.eckdaten);
+    const nextData: Partial<
+      Record<"schlafzimmer" | "badezimmer" | "garage" | "pool", string>
+    > = {};
+
+    if (!document.schlafzimmer && parsed.schlafzimmer) {
+      nextData.schlafzimmer = parsed.schlafzimmer;
+    }
+
+    if (!document.badezimmer && parsed.badezimmer) {
+      nextData.badezimmer = parsed.badezimmer;
+    }
+
+    if (!document.garage && parsed.garage) {
+      nextData.garage = parsed.garage;
+    }
+
+    if (!document.pool && parsed.pool) {
+      nextData.pool = parsed.pool;
+    }
+
+    if (Object.keys(nextData).length === 0) {
+      skippedCount += 1;
       continue;
     }
 
     await strapi.documents(PROPERTY_MODEL_UID).update({
       documentId: document.documentId,
       status: "published",
-      data: {
-        vorschauBild: hasPreviewImage ? document.vorschauBild?.id : media.id,
-        bildergalerie: needsGallery ? [media.id] : galleryIds,
-      },
+      data: nextData as any,
     });
 
-    assignedCount += 1;
+    updatedCount += 1;
   }
 
   strapi.log.info(
-    `[property-media] ${uploadedCount} images uploaded, ${assignedCount} properties synced with media.`,
+    `[property-amenities] ${updatedCount} properties updated, ${skippedCount} skipped.`,
   );
 }
 
@@ -354,6 +538,7 @@ export default {
     await ensureClientRole(strapi);
     await ensurePublicPropertyApiAccess(strapi);
     await ensureSeedProperties(strapi);
+    await ensurePropertyAmenityFields(strapi);
     await ensurePropertyMedia(strapi);
   },
 };
