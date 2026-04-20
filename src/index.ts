@@ -317,6 +317,7 @@ function parseAmenityValues(eckdaten?: string) {
     if (
       !values.badezimmer &&
       (label.includes("badezimmer") ||
+        label.includes("baeder") ||
         label.includes("bader") ||
         label === "bad")
     ) {
@@ -326,7 +327,9 @@ function parseAmenityValues(eckdaten?: string) {
     if (
       !values.garage &&
       (label.includes("garage") ||
+        label.includes("garagenplaetze") ||
         label.includes("garagenplatze") ||
+        label.includes("parkplaetze") ||
         label.includes("parkplatz") ||
         label.includes("stellplatz"))
     ) {
