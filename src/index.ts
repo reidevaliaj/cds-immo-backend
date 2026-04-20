@@ -8,6 +8,27 @@ import { propertySeed } from "./data/property-seed";
 const CLIENT_ROLE_CODE = "client-properties-manager";
 const CLIENT_ROLE_NAME = "Client Immobilien";
 const PROPERTY_MODEL_UID = "api::property.property";
+const STRUCTURED_PROPERTY_FIELDS = [
+  "wohnflaeche",
+  "grundstueck",
+  "schlafzimmer",
+  "badezimmer",
+  "garage",
+  "pool",
+  "terrasse",
+  "strand",
+  "stockwerk",
+  "ausrichtung",
+  "fertigstellung",
+  "baujahr",
+  "flughafen",
+  "golf",
+  "einheiten",
+  "zusatzraum",
+] as const;
+
+type StructuredPropertyField = (typeof STRUCTURED_PROPERTY_FIELDS)[number];
+
 const CLIENT_PROPERTY_FIELDS = [
   "titel",
   "slug",
@@ -15,19 +36,105 @@ const CLIENT_PROPERTY_FIELDS = [
   "ort",
   "region",
   "preisText",
-  "schlafzimmer",
-  "badezimmer",
-  "garage",
-  "pool",
+  ...STRUCTURED_PROPERTY_FIELDS,
   "kurzbeschreibung",
   "beschreibung",
-  "eckdaten",
   "highlights",
   "vermarktungsstatus",
   "featured",
   "vorschauBild",
   "bildergalerie",
 ] as const;
+
+const PROPERTY_FACT_FIELD_DEFINITIONS: Array<{
+  key: StructuredPropertyField;
+  aliases: string[];
+}> = [
+  {
+    key: "wohnflaeche",
+    aliases: [
+      "wohnflaeche",
+      "wohnflache",
+      "wohn und nutzflaeche",
+      "gesamtflaeche",
+      "wohn nutzflaeche",
+    ],
+  },
+  {
+    key: "grundstueck",
+    aliases: ["grundstueck", "grundstuck", "areal"],
+  },
+  {
+    key: "schlafzimmer",
+    aliases: ["schlafzimmer"],
+  },
+  {
+    key: "badezimmer",
+    aliases: ["badezimmer", "baeder", "bader", "bad"],
+  },
+  {
+    key: "garage",
+    aliases: [
+      "garage",
+      "garagenplaetze",
+      "garagenplatze",
+      "parkplatz",
+      "parkplaetze",
+      "stellplatz",
+      "stellplaetze",
+    ],
+  },
+  {
+    key: "pool",
+    aliases: ["pool"],
+  },
+  {
+    key: "terrasse",
+    aliases: ["terrasse", "balkon"],
+  },
+  {
+    key: "strand",
+    aliases: ["strand", "meer", "strand hafen", "strand und zentrum"],
+  },
+  {
+    key: "stockwerk",
+    aliases: ["stockwerk", "etage"],
+  },
+  {
+    key: "ausrichtung",
+    aliases: ["ausrichtung"],
+  },
+  {
+    key: "fertigstellung",
+    aliases: ["fertigstellung"],
+  },
+  {
+    key: "baujahr",
+    aliases: ["baujahr"],
+  },
+  {
+    key: "flughafen",
+    aliases: ["flughafen"],
+  },
+  {
+    key: "golf",
+    aliases: ["golf"],
+  },
+  {
+    key: "einheiten",
+    aliases: [
+      "verfuegbare einheiten",
+      "verfugbare einheiten",
+      "verfuegbare apartments",
+      "einheiten",
+      "apartments",
+    ],
+  },
+  {
+    key: "zusatzraum",
+    aliases: ["zusatzraum", "abstellraum"],
+  },
+];
 
 function createDocumentId() {
   return randomUUID().replace(/-/g, "").slice(0, 24);
@@ -255,13 +362,9 @@ type PropertyDocument = {
   slug?: string;
   titel?: string;
   eckdaten?: string;
-  schlafzimmer?: string | null;
-  badezimmer?: string | null;
-  garage?: string | null;
-  pool?: string | null;
   vorschauBild?: { id?: number } | null;
   bildergalerie?: Array<{ id?: number }> | null;
-};
+} & Partial<Record<StructuredPropertyField, string | null>>;
 
 function normalizePropertySlug(slug?: string) {
   return slug?.replace(/-\d+$/, "") ?? "";
@@ -278,7 +381,7 @@ function normalizePropertyTitle(title?: string) {
   );
 }
 
-function normalizeAmenityToken(value?: string) {
+function normalizeFactToken(value?: string) {
   return (
     value
       ?.normalize("NFD")
@@ -289,63 +392,37 @@ function normalizeAmenityToken(value?: string) {
   );
 }
 
-function parseAmenityValues(eckdaten?: string) {
+function parseStructuredFactValues(eckdaten?: string) {
   const lines = eckdaten
     ?.split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
 
   if (!lines?.length) {
-    return {} as Record<"schlafzimmer" | "badezimmer" | "garage" | "pool", string>;
+    return {} as Partial<Record<StructuredPropertyField, string>>;
   }
 
-  const values: Partial<
-    Record<"schlafzimmer" | "badezimmer" | "garage" | "pool", string>
-  > = {};
+  const values: Partial<Record<StructuredPropertyField, string>> = {};
 
   for (const line of lines) {
     const parts = line.split(":");
-    const label = normalizeAmenityToken(parts.shift());
+    const label = normalizeFactToken(parts.shift());
     const rawValue = parts.join(":").trim();
     const value = rawValue || "inklusive";
-    const wholeLine = normalizeAmenityToken(line);
+    const wholeLine = normalizeFactToken(line);
 
-    if (!values.schlafzimmer && label.includes("schlafzimmer")) {
-      values.schlafzimmer = value;
-    }
+    for (const definition of PROPERTY_FACT_FIELD_DEFINITIONS) {
+      if (values[definition.key]) {
+        continue;
+      }
 
-    if (
-      !values.badezimmer &&
-      (label.includes("badezimmer") ||
-        label.includes("baeder") ||
-        label.includes("bader") ||
-        label === "bad")
-    ) {
-      values.badezimmer = value;
-    }
+      const matches = definition.aliases.some(
+        (alias) => label.includes(alias) || wholeLine.includes(alias),
+      );
 
-    if (
-      !values.garage &&
-      (label.includes("garage") ||
-        label.includes("garagenplaetze") ||
-        label.includes("garagenplatze") ||
-        label.includes("parkplaetze") ||
-        label.includes("parkplatz") ||
-        label.includes("stellplatz"))
-    ) {
-      values.garage = value;
-    }
-
-    if (!values.pool && label.includes("pool")) {
-      values.pool = value;
-    }
-
-    if (!values.garage && wholeLine.includes("garage")) {
-      values.garage = "inklusive";
-    }
-
-    if (!values.pool && wholeLine.includes("pool")) {
-      values.pool = "inklusive";
+      if (matches) {
+        values[definition.key] = value;
+      }
     }
   }
 
@@ -472,17 +549,10 @@ async function ensurePropertyMedia(strapi: Core.Strapi) {
   );
 }
 
-async function ensurePropertyAmenityFields(strapi: Core.Strapi) {
+async function ensureStructuredPropertyFields(strapi: Core.Strapi) {
   const documents = (await strapi.documents(PROPERTY_MODEL_UID).findMany({
     status: "published",
-    fields: [
-      "documentId",
-      "eckdaten",
-      "schlafzimmer",
-      "badezimmer",
-      "garage",
-      "pool",
-    ] as any,
+    fields: ["documentId", "eckdaten", ...STRUCTURED_PROPERTY_FIELDS] as any,
   })) as PropertyDocument[];
 
   let updatedCount = 0;
@@ -494,25 +564,13 @@ async function ensurePropertyAmenityFields(strapi: Core.Strapi) {
       continue;
     }
 
-    const parsed = parseAmenityValues(document.eckdaten);
-    const nextData: Partial<
-      Record<"schlafzimmer" | "badezimmer" | "garage" | "pool", string>
-    > = {};
+    const parsed = parseStructuredFactValues(document.eckdaten);
+    const nextData: Partial<Record<StructuredPropertyField, string>> = {};
 
-    if (!document.schlafzimmer && parsed.schlafzimmer) {
-      nextData.schlafzimmer = parsed.schlafzimmer;
-    }
-
-    if (!document.badezimmer && parsed.badezimmer) {
-      nextData.badezimmer = parsed.badezimmer;
-    }
-
-    if (!document.garage && parsed.garage) {
-      nextData.garage = parsed.garage;
-    }
-
-    if (!document.pool && parsed.pool) {
-      nextData.pool = parsed.pool;
+    for (const field of STRUCTURED_PROPERTY_FIELDS) {
+      if (!document[field] && parsed[field]) {
+        nextData[field] = parsed[field];
+      }
     }
 
     if (Object.keys(nextData).length === 0) {
@@ -530,7 +588,7 @@ async function ensurePropertyAmenityFields(strapi: Core.Strapi) {
   }
 
   strapi.log.info(
-    `[property-amenities] ${updatedCount} properties updated, ${skippedCount} skipped.`,
+    `[property-facts] ${updatedCount} properties updated, ${skippedCount} skipped.`,
   );
 }
 
@@ -541,7 +599,7 @@ export default {
     await ensureClientRole(strapi);
     await ensurePublicPropertyApiAccess(strapi);
     await ensureSeedProperties(strapi);
-    await ensurePropertyAmenityFields(strapi);
+    await ensureStructuredPropertyFields(strapi);
     await ensurePropertyMedia(strapi);
   },
 };

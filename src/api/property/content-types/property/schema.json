@@ -37,6 +37,12 @@
       "type": "string",
       "required": true
     },
+    "wohnflaeche": {
+      "type": "string"
+    },
+    "grundstueck": {
+      "type": "string"
+    },
     "schlafzimmer": {
       "type": "string"
     },
@@ -47,6 +53,36 @@
       "type": "string"
     },
     "pool": {
+      "type": "string"
+    },
+    "terrasse": {
+      "type": "string"
+    },
+    "strand": {
+      "type": "string"
+    },
+    "stockwerk": {
+      "type": "string"
+    },
+    "ausrichtung": {
+      "type": "string"
+    },
+    "fertigstellung": {
+      "type": "string"
+    },
+    "baujahr": {
+      "type": "string"
+    },
+    "flughafen": {
+      "type": "string"
+    },
+    "golf": {
+      "type": "string"
+    },
+    "einheiten": {
+      "type": "string"
+    },
+    "zusatzraum": {
       "type": "string"
     },
     "kurzbeschreibung": {
