@@ -8,6 +8,8 @@ import { propertySeed } from "./data/property-seed";
 const CLIENT_ROLE_CODE = "client-properties-manager";
 const CLIENT_ROLE_NAME = "Client Immobilien";
 const PROPERTY_MODEL_UID = "api::property.property";
+const PROPERTY_CONTENT_MANAGER_KEY =
+  `plugin_content_manager_configuration_content_types::${PROPERTY_MODEL_UID}`;
 const STRUCTURED_PROPERTY_FIELDS = [
   "wohnflaeche",
   "grundstueck",
@@ -150,6 +152,28 @@ function parseJsonValue(value: unknown) {
   } catch {
     return {};
   }
+}
+
+function removeFieldFromEditLayout(layout: unknown, fieldName: string) {
+  if (!Array.isArray(layout)) {
+    return layout;
+  }
+
+  return layout
+    .map((row) => {
+      if (!Array.isArray(row)) {
+        return row;
+      }
+
+      return row.filter((field) => {
+        if (!field || typeof field !== "object") {
+          return true;
+        }
+
+        return (field as { name?: string }).name !== fieldName;
+      });
+    })
+    .filter((row) => !Array.isArray(row) || row.length > 0);
 }
 
 async function ensureAdminPermission(
@@ -354,6 +378,107 @@ async function ensureSeedProperties(strapi: Core.Strapi) {
 
   strapi.log.info(
     `[property-seed] ${createdCount} properties created, ${propertySeed.length - createdCount} already existed.`,
+  );
+}
+
+async function ensurePropertyContentManagerConfiguration(strapi: Core.Strapi) {
+  const knex = strapi.db.connection;
+  const existing = await knex("strapi_core_store_settings")
+    .where({ key: PROPERTY_CONTENT_MANAGER_KEY })
+    .first(["id", "value"]);
+
+  if (!existing?.id) {
+    return;
+  }
+
+  const configuration = parseJsonValue(existing.value) as {
+    settings?: Record<string, unknown>;
+    metadatas?: Record<
+      string,
+      {
+        edit?: Record<string, unknown>;
+        list?: Record<string, unknown>;
+      }
+    >;
+    layouts?: {
+      list?: string[];
+      edit?: unknown;
+    };
+  };
+
+  configuration.settings = {
+    ...(configuration.settings ?? {}),
+    defaultSortBy: "updatedAt",
+    defaultSortOrder: "DESC",
+  };
+
+  configuration.metadatas = configuration.metadatas ?? {};
+  configuration.layouts = configuration.layouts ?? {};
+
+  if (configuration.metadatas.eckdaten) {
+    configuration.metadatas.eckdaten = {
+      ...configuration.metadatas.eckdaten,
+      edit: {
+        ...(configuration.metadatas.eckdaten.edit ?? {}),
+        visible: false,
+        editable: false,
+      },
+      list: {
+        ...(configuration.metadatas.eckdaten.list ?? {}),
+        searchable: false,
+        sortable: false,
+      },
+    };
+  }
+
+  if (configuration.metadatas.createdAt) {
+    configuration.metadatas.createdAt = {
+      ...configuration.metadatas.createdAt,
+      list: {
+        ...(configuration.metadatas.createdAt.list ?? {}),
+        label: "Erstellt am",
+        searchable: false,
+        sortable: true,
+      },
+    };
+  }
+
+  if (configuration.metadatas.updatedAt) {
+    configuration.metadatas.updatedAt = {
+      ...configuration.metadatas.updatedAt,
+      list: {
+        ...(configuration.metadatas.updatedAt.list ?? {}),
+        label: "Zuletzt geändert",
+        searchable: false,
+        sortable: true,
+      },
+    };
+  }
+
+  configuration.layouts.list = [
+    "titel",
+    "objektgruppe",
+    "ort",
+    "preisText",
+    "updatedAt",
+  ];
+  configuration.layouts.edit = removeFieldFromEditLayout(
+    configuration.layouts.edit,
+    "eckdaten",
+  );
+
+  const nextValue = JSON.stringify(configuration);
+
+  if (nextValue === existing.value) {
+    return;
+  }
+
+  await knex("strapi_core_store_settings")
+    .where({ id: existing.id })
+    .update({ value: nextValue });
+
+  strapi.log.info(
+    `[content-manager] Updated property list defaults and removed legacy eckdaten from the editor layout.`,
   );
 }
 
@@ -596,9 +721,10 @@ export default {
   register() {},
 
   async bootstrap({ strapi }: { strapi: Core.Strapi }) {
+    await ensureSeedProperties(strapi);
+    await ensurePropertyContentManagerConfiguration(strapi);
     await ensureClientRole(strapi);
     await ensurePublicPropertyApiAccess(strapi);
-    await ensureSeedProperties(strapi);
     await ensureStructuredPropertyFields(strapi);
     await ensurePropertyMedia(strapi);
   },
